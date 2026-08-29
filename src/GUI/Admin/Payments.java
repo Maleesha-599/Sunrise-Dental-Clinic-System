@@ -13,12 +13,15 @@ import javax.swing.DefaultComboBoxModel;
 import javax.swing.RowFilter;
 import javax.swing.table.DefaultTableModel;
 import javax.swing.table.TableRowSorter;
+import java.text.DecimalFormat;
 
 /**
  *
  * @author Lenovo
  */
 public class Payments extends javax.swing.JInternalFrame {
+
+    private final DecimalFormat df = new DecimalFormat("#,##0.00");
 
     private static HashMap<String, String> paymentStatusMap = new HashMap<>();
 
@@ -40,11 +43,84 @@ public class Payments extends javax.swing.JInternalFrame {
         setFrameIcon(null);
 
         LoadPayments();
+        loadPaymentCards();
         LoadPaymentStatus();
 
         Parent = parent;
 
-        jTextField1.grabFocus();
+    }
+
+    private void loadPaymentCards() {
+
+        try {
+
+            DecimalFormat df = new DecimalFormat("#,##0.00");
+
+            // TOTAL PAYMENTS
+            ResultSet totalResult = MySQL.executeSearch("SELECT COALESCE(SUM(total_amount), 0) AS total FROM payment");
+
+            if (totalResult.next()) {
+
+                double totalPayments = totalResult.getDouble("total");
+
+                jLabelTotalPayments.setText(
+                        "Rs. " + df.format(totalPayments)
+                );
+            }
+
+            // TODAY'S INCOME
+            ResultSet todayResult = MySQL.executeSearch("SELECT COALESCE(SUM(total_amount), 0) "
+                    + "AS total FROM payment WHERE DATE(payment_date_and_time) = CURDATE()");
+
+            if (todayResult.next()) {
+
+                double todayIncome = todayResult.getDouble("total");
+
+                jLabelTodayIncome.setText(
+                        "Rs. " + df.format(todayIncome)
+                );
+            }
+
+            // MONTHLY INCOME
+            ResultSet monthlyResult = MySQL.executeSearch("SELECT COALESCE(SUM(total_amount), 0) "
+                    + "AS total FROM payment WHERE MONTH(payment_date_and_time) = MONTH(CURDATE()) "
+                    + "AND YEAR(payment_date_and_time) = YEAR(CURDATE())");
+
+            if (monthlyResult.next()) {
+
+                double monthlyIncome = monthlyResult.getDouble("total");
+
+                jLabelMonthlyIncome.setText(
+                        "Rs. " + df.format(monthlyIncome)
+                );
+            }
+
+            // 4. OUTSTANDING AMOUNT
+            ResultSet outstandingResult = MySQL.executeSearch(
+                    "SELECT COALESCE(SUM(payment.total_amount), 0) AS total "
+                    + "FROM payment "
+                    + "INNER JOIN payment_status "
+                    + "ON payment.Payment_status_payment_status_id "
+                    + "= payment_status.payment_status_id "
+                    + "WHERE payment_status.payment_status = 'Not paid'"
+            );
+
+            double outstandingAmount = 0;
+
+            if (outstandingResult.next()) {
+                outstandingAmount = outstandingResult.getDouble("total");
+            }
+
+            jLabelOutstandingAmount.setText(
+                    "Rs. " + df.format(outstandingAmount)
+            );
+
+        } catch (Exception e) {
+
+            e.printStackTrace();
+
+        }
+
     }
 
     private void LoadPaymentStatus() {
@@ -74,13 +150,12 @@ public class Payments extends javax.swing.JInternalFrame {
         try {
 
             ResultSet resultSet = MySQL.executeSearch("SELECT appointment.appointment_number, "
-                    + "payment.treatment_cost, payment.consultation_fee, payment.total_amount, "
-                    + "payment.payment_date_and_time, payment_status.payment_status, "
-                    + "appointment.appointment_id FROM `payment` INNER JOIN `appointment` "
-                    + "ON payment.Appointment_appointment_id = appointment.appointment_id "
+                    + "patient.patient_nic, treatment.treatment_name, payment.treatment_cost, "
+                    + "payment.consultation_fee, payment.total_amount, payment.payment_date_and_time, "
+                    + "payment_status.payment_status, appointment.appointment_id FROM `payment` "
+                    + "INNER JOIN `appointment` ON payment.Appointment_appointment_id = appointment.appointment_id "
                     + "INNER JOIN `patient` ON appointment.Patient_patient_nic = patient.patient_nic "
-                    + "INNER JOIN `appointment_has_treatment` "
-                    + "ON appointment.appointment_id = appointment_has_treatment.Treatment_treatment_id "
+                    + "INNER JOIN `appointment_has_treatment` ON appointment.appointment_id = appointment_has_treatment.Appointment_appointment_id "
                     + "INNER JOIN `treatment` ON appointment_has_treatment.Treatment_treatment_id = treatment.treatment_id "
                     + "INNER JOIN `payment_status` ON payment.Payment_status_payment_status_id = payment_status.payment_status_id "
                     + "ORDER BY payment.payment_id DESC;");
@@ -90,22 +165,79 @@ public class Payments extends javax.swing.JInternalFrame {
 
             while (resultSet.next()) {
                 Vector<String> vector = new Vector<>();
+                vector.add(resultSet.getString("appointment.appointment_number"));
+                vector.add(resultSet.getString("patient.patient_nic"));
+                vector.add(resultSet.getString("treatment.treatment_name"));
                 vector.add(resultSet.getString("treatment_cost"));
                 vector.add(resultSet.getString("consultation_fee"));
                 vector.add(resultSet.getString("total_amount"));
                 vector.add(resultSet.getString("payment_date_and_time"));
                 vector.add(resultSet.getString("payment_status.payment_status"));
-                vector.add(resultSet.getString("appointment.appointment_number"));
+                vector.add(resultSet.getString("appointment.appointment_id"));
 
                 model.addRow(vector);
             }
+
+            jTable1.getColumnModel().getColumn(8).setMinWidth(0);
+            jTable1.getColumnModel().getColumn(8).setMaxWidth(0);
+            jTable1.getColumnModel().getColumn(8).setPreferredWidth(0);
 
         } catch (Exception e) {
             e.printStackTrace();
         }
 
     }
-    
+
+    private void LoadPayments(String selectedDate) {
+
+        try {
+
+            DefaultTableModel model = (DefaultTableModel) jTable1.getModel();
+            model.setRowCount(0);
+
+            if (selectedDate == null
+                    || selectedDate.trim().isEmpty()
+                    || selectedDate.equals("----------")) {
+                return;
+            }
+
+            ResultSet resultSet = MySQL.executeSearch("SELECT appointment.appointment_number, "
+                    + "patient.patient_nic, treatment.treatment_name, payment.treatment_cost, "
+                    + "payment.consultation_fee, payment.total_amount, payment.payment_date_and_time, "
+                    + "payment_status.payment_status, appointment.appointment_id FROM `payment` "
+                    + "INNER JOIN `appointment` ON payment.Appointment_appointment_id = appointment.appointment_id "
+                    + "INNER JOIN `patient` ON appointment.Patient_patient_nic = patient.patient_nic "
+                    + "INNER JOIN `appointment_has_treatment` ON appointment.appointment_id = appointment_has_treatment.Appointment_appointment_id "
+                    + "INNER JOIN `treatment` ON appointment_has_treatment.Treatment_treatment_id = treatment.treatment_id "
+                    + "INNER JOIN `payment_status` ON payment.Payment_status_payment_status_id = payment_status.payment_status_id "
+                    + "WHERE DATE(payment.payment_date_and_time) = '" + selectedDate + "' "
+                    + "ORDER BY payment.payment_id DESC;");
+
+            while (resultSet.next()) {
+                Vector<String> vector = new Vector<>();
+                vector.add(resultSet.getString("appointment.appointment_number"));
+                vector.add(resultSet.getString("patient.patient_nic"));
+                vector.add(resultSet.getString("treatment.treatment_name"));
+                vector.add(resultSet.getString("treatment_cost"));
+                vector.add(resultSet.getString("consultation_fee"));
+                vector.add(resultSet.getString("total_amount"));
+                vector.add(resultSet.getString("payment_date_and_time"));
+                vector.add(resultSet.getString("payment_status.payment_status"));
+                vector.add(resultSet.getString("appointment.appointment_id"));
+
+                model.addRow(vector);
+            }
+
+            jTable1.getColumnModel().getColumn(8).setMinWidth(0);
+            jTable1.getColumnModel().getColumn(8).setMaxWidth(0);
+            jTable1.getColumnModel().getColumn(8).setPreferredWidth(0);
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+    }
+
     private void applyFilters() {
 
         String search = jTextField7.getText().trim();
@@ -115,11 +247,11 @@ public class Payments extends javax.swing.JInternalFrame {
         java.util.List<RowFilter<Object, Object>> filters = new java.util.ArrayList<>();
 
         if (!search.isEmpty()) {
-            filters.add(RowFilter.regexFilter("(?i)" + Pattern.quote(search), 0, 3));
+            filters.add(RowFilter.regexFilter("(?i)" + Pattern.quote(search), 0, 1, 2));
         }
 
         if (!status.equals("Select")) {
-            filters.add(RowFilter.regexFilter("^" + Pattern.quote(status) + "$", 4));
+            filters.add(RowFilter.regexFilter("^" + Pattern.quote(status) + "$", 7));
         }
 
         sorter.setRowFilter(RowFilter.andFilter(filters));
@@ -129,6 +261,7 @@ public class Payments extends javax.swing.JInternalFrame {
     // <editor-fold defaultstate="collapsed" desc="Generated Code">//GEN-BEGIN:initComponents
     private void initComponents() {
 
+        datePicker1 = new raven.datetime.component.date.DatePicker();
         jPanel1 = new javax.swing.JPanel();
         jLabel11 = new javax.swing.JLabel();
         jPanel2 = new javax.swing.JPanel();
@@ -148,7 +281,7 @@ public class Payments extends javax.swing.JInternalFrame {
         jLabel20 = new javax.swing.JLabel();
         jTextField10 = new javax.swing.JTextField();
         jLabel21 = new javax.swing.JLabel();
-        jFormattedTextField1 = new javax.swing.JFormattedTextField();
+        jTextField8 = new javax.swing.JTextField();
         jPanel3 = new javax.swing.JPanel();
         jScrollPane1 = new javax.swing.JScrollPane();
         jTable1 = new javax.swing.JTable();
@@ -160,16 +293,25 @@ public class Payments extends javax.swing.JInternalFrame {
         jFormattedTextField2 = new javax.swing.JFormattedTextField();
         jPanel4 = new javax.swing.JPanel();
         jLabel5 = new javax.swing.JLabel();
-        jLabel6 = new javax.swing.JLabel();
+        jLabelTotalPayments = new javax.swing.JLabel();
         jPanel5 = new javax.swing.JPanel();
         jLabel7 = new javax.swing.JLabel();
-        jLabel10 = new javax.swing.JLabel();
+        jLabelTodayIncome = new javax.swing.JLabel();
         jPanel6 = new javax.swing.JPanel();
         jLabel13 = new javax.swing.JLabel();
-        jLabel14 = new javax.swing.JLabel();
+        jLabelMonthlyIncome = new javax.swing.JLabel();
         jPanel7 = new javax.swing.JPanel();
         jLabel15 = new javax.swing.JLabel();
-        jLabel16 = new javax.swing.JLabel();
+        jLabelOutstandingAmount = new javax.swing.JLabel();
+
+        datePicker1.setCloseAfterSelected(true);
+        datePicker1.setDateFormat("yyyy-MM-dd");
+        datePicker1.setEditor(jFormattedTextField2);
+        datePicker1.addPropertyChangeListener(new java.beans.PropertyChangeListener() {
+            public void propertyChange(java.beans.PropertyChangeEvent evt) {
+                datePicker1PropertyChange(evt);
+            }
+        });
 
         jLabel11.setFont(new java.awt.Font("Segoe UI Black", 1, 24)); // NOI18N
         jLabel11.setForeground(new java.awt.Color(0, 0, 102));
@@ -179,9 +321,17 @@ public class Payments extends javax.swing.JInternalFrame {
 
         jLabel1.setText("Appointment Number");
 
+        jTextField1.setEditable(false);
+        jTextField1.setCursor(new java.awt.Cursor(java.awt.Cursor.TEXT_CURSOR));
+        jTextField1.setFocusable(false);
+
         jLabel2.setText("Treatment Cost");
 
+        jTextField2.setFocusable(false);
+
         jLabel3.setText("Consultation fee");
+
+        jTextField3.setFocusable(false);
 
         jButton4.setFont(new java.awt.Font("Segoe UI Black", 1, 18)); // NOI18N
         jButton4.setText("Cancel");
@@ -191,15 +341,25 @@ public class Payments extends javax.swing.JInternalFrame {
             }
         });
 
-        jLabel4.setText("Patient Name");
+        jLabel4.setText("Patient NIC");
+
+        jTextField4.setFocusable(false);
 
         jLabel17.setText("Treatment");
 
+        jTextField5.setFocusable(false);
+
         jLabel19.setText("Total Amount");
+
+        jTextField6.setFocusable(false);
 
         jLabel20.setText("Payment Date");
 
+        jTextField10.setFocusable(false);
+
         jLabel21.setText("Payment Status");
+
+        jTextField8.setFocusable(false);
 
         javax.swing.GroupLayout jPanel2Layout = new javax.swing.GroupLayout(jPanel2);
         jPanel2.setLayout(jPanel2Layout);
@@ -238,8 +398,8 @@ public class Payments extends javax.swing.JInternalFrame {
                         .addComponent(jTextField6, javax.swing.GroupLayout.PREFERRED_SIZE, 183, javax.swing.GroupLayout.PREFERRED_SIZE))
                     .addGroup(jPanel2Layout.createSequentialGroup()
                         .addComponent(jLabel20, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
-                        .addGap(18, 18, 18)
-                        .addComponent(jFormattedTextField1, javax.swing.GroupLayout.PREFERRED_SIZE, 185, javax.swing.GroupLayout.PREFERRED_SIZE))
+                        .addGap(20, 20, 20)
+                        .addComponent(jTextField8, javax.swing.GroupLayout.PREFERRED_SIZE, 183, javax.swing.GroupLayout.PREFERRED_SIZE))
                     .addGroup(jPanel2Layout.createSequentialGroup()
                         .addComponent(jLabel21, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
                         .addGap(18, 18, 18)
@@ -273,10 +433,10 @@ public class Payments extends javax.swing.JInternalFrame {
                 .addGroup(jPanel2Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
                     .addComponent(jLabel19, javax.swing.GroupLayout.PREFERRED_SIZE, 22, javax.swing.GroupLayout.PREFERRED_SIZE)
                     .addComponent(jTextField6, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))
-                .addGap(20, 20, 20)
+                .addGap(18, 18, 18)
                 .addGroup(jPanel2Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
                     .addComponent(jLabel20, javax.swing.GroupLayout.PREFERRED_SIZE, 22, javax.swing.GroupLayout.PREFERRED_SIZE)
-                    .addComponent(jFormattedTextField1, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))
+                    .addComponent(jTextField8, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))
                 .addGap(20, 20, 20)
                 .addGroup(jPanel2Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
                     .addComponent(jLabel21, javax.swing.GroupLayout.PREFERRED_SIZE, 22, javax.swing.GroupLayout.PREFERRED_SIZE)
@@ -293,11 +453,11 @@ public class Payments extends javax.swing.JInternalFrame {
 
             },
             new String [] {
-                "Appointment Number", "Treatment cost", "Consultation fee", "Total amount", "Payment date and time", "Payment status", "Appointment id"
+                "Appointment Number", "Patient NIC", "Treatment", "Treatment cost", "Consultation fee", "Total amount", "Payment date & time", "Payment status", "Appointment id"
             }
         ) {
             boolean[] canEdit = new boolean [] {
-                false, false, false, false, false, false, false
+                false, false, false, false, false, false, false, false, false
             };
 
             public boolean isCellEditable(int rowIndex, int columnIndex) {
@@ -324,6 +484,8 @@ public class Payments extends javax.swing.JInternalFrame {
             jTable1.getColumnModel().getColumn(4).setResizable(false);
             jTable1.getColumnModel().getColumn(5).setResizable(false);
             jTable1.getColumnModel().getColumn(6).setResizable(false);
+            jTable1.getColumnModel().getColumn(7).setResizable(false);
+            jTable1.getColumnModel().getColumn(8).setResizable(false);
         }
 
         jTextField7.addActionListener(new java.awt.event.ActionListener() {
@@ -349,6 +511,12 @@ public class Payments extends javax.swing.JInternalFrame {
         });
 
         jLabel18.setText("Date");
+
+        jFormattedTextField2.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                jFormattedTextField2ActionPerformed(evt);
+            }
+        });
 
         javax.swing.GroupLayout jPanel3Layout = new javax.swing.GroupLayout(jPanel3);
         jPanel3.setLayout(jPanel3Layout);
@@ -395,10 +563,10 @@ public class Payments extends javax.swing.JInternalFrame {
         jLabel5.setHorizontalAlignment(javax.swing.SwingConstants.CENTER);
         jLabel5.setText("TOTAL PAYMENTS ");
 
-        jLabel6.setFont(new java.awt.Font("Segoe UI Black", 1, 24)); // NOI18N
-        jLabel6.setForeground(new java.awt.Color(0, 0, 102));
-        jLabel6.setHorizontalAlignment(javax.swing.SwingConstants.CENTER);
-        jLabel6.setText("Rs. 250,000.00");
+        jLabelTotalPayments.setFont(new java.awt.Font("Segoe UI Black", 1, 24)); // NOI18N
+        jLabelTotalPayments.setForeground(new java.awt.Color(0, 0, 102));
+        jLabelTotalPayments.setHorizontalAlignment(javax.swing.SwingConstants.CENTER);
+        jLabelTotalPayments.setText("Rs. 250,000.00");
 
         javax.swing.GroupLayout jPanel4Layout = new javax.swing.GroupLayout(jPanel4);
         jPanel4.setLayout(jPanel4Layout);
@@ -408,7 +576,7 @@ public class Payments extends javax.swing.JInternalFrame {
                 .addContainerGap()
                 .addGroup(jPanel4Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
                     .addComponent(jLabel5, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
-                    .addComponent(jLabel6, javax.swing.GroupLayout.Alignment.TRAILING, javax.swing.GroupLayout.DEFAULT_SIZE, 208, Short.MAX_VALUE))
+                    .addComponent(jLabelTotalPayments, javax.swing.GroupLayout.Alignment.TRAILING, javax.swing.GroupLayout.DEFAULT_SIZE, 208, Short.MAX_VALUE))
                 .addContainerGap())
         );
         jPanel4Layout.setVerticalGroup(
@@ -417,7 +585,7 @@ public class Payments extends javax.swing.JInternalFrame {
                 .addContainerGap(javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
                 .addComponent(jLabel5)
                 .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                .addComponent(jLabel6)
+                .addComponent(jLabelTotalPayments)
                 .addGap(23, 23, 23))
         );
 
@@ -428,10 +596,10 @@ public class Payments extends javax.swing.JInternalFrame {
         jLabel7.setHorizontalAlignment(javax.swing.SwingConstants.CENTER);
         jLabel7.setText("TODAY'S INCOME");
 
-        jLabel10.setFont(new java.awt.Font("Segoe UI Black", 1, 24)); // NOI18N
-        jLabel10.setForeground(new java.awt.Color(0, 0, 102));
-        jLabel10.setHorizontalAlignment(javax.swing.SwingConstants.CENTER);
-        jLabel10.setText("Rs. 15,000.00");
+        jLabelTodayIncome.setFont(new java.awt.Font("Segoe UI Black", 1, 24)); // NOI18N
+        jLabelTodayIncome.setForeground(new java.awt.Color(0, 0, 102));
+        jLabelTodayIncome.setHorizontalAlignment(javax.swing.SwingConstants.CENTER);
+        jLabelTodayIncome.setText("Rs. 15,000.00");
 
         javax.swing.GroupLayout jPanel5Layout = new javax.swing.GroupLayout(jPanel5);
         jPanel5.setLayout(jPanel5Layout);
@@ -441,7 +609,7 @@ public class Payments extends javax.swing.JInternalFrame {
                 .addContainerGap()
                 .addGroup(jPanel5Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
                     .addComponent(jLabel7, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
-                    .addComponent(jLabel10, javax.swing.GroupLayout.Alignment.TRAILING, javax.swing.GroupLayout.DEFAULT_SIZE, 208, Short.MAX_VALUE))
+                    .addComponent(jLabelTodayIncome, javax.swing.GroupLayout.Alignment.TRAILING, javax.swing.GroupLayout.DEFAULT_SIZE, 208, Short.MAX_VALUE))
                 .addContainerGap())
         );
         jPanel5Layout.setVerticalGroup(
@@ -450,7 +618,7 @@ public class Payments extends javax.swing.JInternalFrame {
                 .addContainerGap(javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
                 .addComponent(jLabel7)
                 .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                .addComponent(jLabel10)
+                .addComponent(jLabelTodayIncome)
                 .addGap(23, 23, 23))
         );
 
@@ -461,10 +629,10 @@ public class Payments extends javax.swing.JInternalFrame {
         jLabel13.setHorizontalAlignment(javax.swing.SwingConstants.CENTER);
         jLabel13.setText("MONTHLY INCOME");
 
-        jLabel14.setFont(new java.awt.Font("Segoe UI Black", 1, 24)); // NOI18N
-        jLabel14.setForeground(new java.awt.Color(0, 0, 102));
-        jLabel14.setHorizontalAlignment(javax.swing.SwingConstants.CENTER);
-        jLabel14.setText("Rs. 180,000.00");
+        jLabelMonthlyIncome.setFont(new java.awt.Font("Segoe UI Black", 1, 24)); // NOI18N
+        jLabelMonthlyIncome.setForeground(new java.awt.Color(0, 0, 102));
+        jLabelMonthlyIncome.setHorizontalAlignment(javax.swing.SwingConstants.CENTER);
+        jLabelMonthlyIncome.setText("Rs. 180,000.00");
 
         javax.swing.GroupLayout jPanel6Layout = new javax.swing.GroupLayout(jPanel6);
         jPanel6.setLayout(jPanel6Layout);
@@ -474,7 +642,7 @@ public class Payments extends javax.swing.JInternalFrame {
                 .addContainerGap()
                 .addGroup(jPanel6Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
                     .addComponent(jLabel13, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
-                    .addComponent(jLabel14, javax.swing.GroupLayout.Alignment.TRAILING, javax.swing.GroupLayout.DEFAULT_SIZE, 260, Short.MAX_VALUE))
+                    .addComponent(jLabelMonthlyIncome, javax.swing.GroupLayout.Alignment.TRAILING, javax.swing.GroupLayout.DEFAULT_SIZE, 260, Short.MAX_VALUE))
                 .addContainerGap())
         );
         jPanel6Layout.setVerticalGroup(
@@ -483,7 +651,7 @@ public class Payments extends javax.swing.JInternalFrame {
                 .addContainerGap(javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
                 .addComponent(jLabel13)
                 .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                .addComponent(jLabel14)
+                .addComponent(jLabelMonthlyIncome)
                 .addGap(23, 23, 23))
         );
 
@@ -494,10 +662,10 @@ public class Payments extends javax.swing.JInternalFrame {
         jLabel15.setHorizontalAlignment(javax.swing.SwingConstants.CENTER);
         jLabel15.setText("OUTSTANDING AMOUNT");
 
-        jLabel16.setFont(new java.awt.Font("Segoe UI Black", 1, 24)); // NOI18N
-        jLabel16.setForeground(new java.awt.Color(0, 0, 102));
-        jLabel16.setHorizontalAlignment(javax.swing.SwingConstants.CENTER);
-        jLabel16.setText("Rs. 75,000.00");
+        jLabelOutstandingAmount.setFont(new java.awt.Font("Segoe UI Black", 1, 24)); // NOI18N
+        jLabelOutstandingAmount.setForeground(new java.awt.Color(0, 0, 102));
+        jLabelOutstandingAmount.setHorizontalAlignment(javax.swing.SwingConstants.CENTER);
+        jLabelOutstandingAmount.setText("Rs. 75,000.00");
 
         javax.swing.GroupLayout jPanel7Layout = new javax.swing.GroupLayout(jPanel7);
         jPanel7.setLayout(jPanel7Layout);
@@ -507,7 +675,7 @@ public class Payments extends javax.swing.JInternalFrame {
                 .addContainerGap()
                 .addGroup(jPanel7Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
                     .addComponent(jLabel15, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
-                    .addComponent(jLabel16, javax.swing.GroupLayout.Alignment.TRAILING, javax.swing.GroupLayout.DEFAULT_SIZE, 247, Short.MAX_VALUE))
+                    .addComponent(jLabelOutstandingAmount, javax.swing.GroupLayout.Alignment.TRAILING, javax.swing.GroupLayout.DEFAULT_SIZE, 247, Short.MAX_VALUE))
                 .addContainerGap())
         );
         jPanel7Layout.setVerticalGroup(
@@ -516,7 +684,7 @@ public class Payments extends javax.swing.JInternalFrame {
                 .addContainerGap(javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
                 .addComponent(jLabel15)
                 .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                .addComponent(jLabel16)
+                .addComponent(jLabelOutstandingAmount)
                 .addGap(23, 23, 23))
         );
 
@@ -572,17 +740,45 @@ public class Payments extends javax.swing.JInternalFrame {
 
         reset();
 
-      
-        jTextField2.setEditable(true);
-        jTextField3.setEditable(true);
-
         jTable1.clearSelection();
-
-        LoadPayments();
     }//GEN-LAST:event_jButton4ActionPerformed
 
     private void jTable1MouseClicked(java.awt.event.MouseEvent evt) {//GEN-FIRST:event_jTable1MouseClicked
 
+        if (evt.getClickCount() == 2) {
+
+            int viewRow = jTable1.getSelectedRow();
+
+            if (viewRow == -1) {
+                return;
+            }
+
+            int row = jTable1.convertRowIndexToModel(viewRow);
+
+            jTextField1.setText(String.valueOf(jTable1.getModel().getValueAt(row, 0)));
+            jTextField4.setText(String.valueOf(jTable1.getModel().getValueAt(row, 1)));
+            jTextField5.setText(String.valueOf(jTable1.getModel().getValueAt(row, 2)));
+            jTextField2.setText(String.valueOf(jTable1.getModel().getValueAt(row, 3)));
+            jTextField3.setText(String.valueOf(jTable1.getModel().getValueAt(row, 4)));
+            jTextField6.setText(String.valueOf(jTable1.getModel().getValueAt(row, 5)));
+            jTextField8.setText(String.valueOf(jTable1.getModel().getValueAt(row, 6)));
+            jTextField10.setText(String.valueOf(jTable1.getModel().getValueAt(row, 7)));
+
+            try {
+
+                jTextField1.setEditable(false);
+                jTextField4.setEditable(false);
+                jTextField5.setEditable(false);
+                jTextField2.setEditable(false);
+                jTextField3.setEditable(false);
+                jTextField6.setEditable(false);
+                jTextField8.setEditable(false);
+                jTextField10.setEditable(false);
+
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
     }//GEN-LAST:event_jTable1MouseClicked
 
     private void jTable1MousePressed(java.awt.event.MouseEvent evt) {//GEN-FIRST:event_jTable1MousePressed
@@ -607,20 +803,37 @@ public class Payments extends javax.swing.JInternalFrame {
         applyFilters();
     }//GEN-LAST:event_jComboBox4ActionPerformed
 
+    private void jFormattedTextField2ActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_jFormattedTextField2ActionPerformed
+
+        String selectedDate = jFormattedTextField2.getText().trim();
+
+        if (!selectedDate.isEmpty()) {
+            LoadPayments(selectedDate);
+        }
+    }//GEN-LAST:event_jFormattedTextField2ActionPerformed
+
+    private void datePicker1PropertyChange(java.beans.PropertyChangeEvent evt) {//GEN-FIRST:event_datePicker1PropertyChange
+
+        String selectedDate = jFormattedTextField2.getText().trim();
+
+        if (selectedDate == null || selectedDate.isEmpty() || selectedDate.equals("----------")) {
+            return;
+        }
+
+        LoadPayments(selectedDate);
+    }//GEN-LAST:event_datePicker1PropertyChange
+
 
     // Variables declaration - do not modify//GEN-BEGIN:variables
+    private raven.datetime.component.date.DatePicker datePicker1;
     private javax.swing.JButton jButton4;
     private javax.swing.JComboBox<String> jComboBox4;
-    private javax.swing.JFormattedTextField jFormattedTextField1;
     private javax.swing.JFormattedTextField jFormattedTextField2;
     private javax.swing.JLabel jLabel1;
-    private javax.swing.JLabel jLabel10;
     private javax.swing.JLabel jLabel11;
     private javax.swing.JLabel jLabel12;
     private javax.swing.JLabel jLabel13;
-    private javax.swing.JLabel jLabel14;
     private javax.swing.JLabel jLabel15;
-    private javax.swing.JLabel jLabel16;
     private javax.swing.JLabel jLabel17;
     private javax.swing.JLabel jLabel18;
     private javax.swing.JLabel jLabel19;
@@ -630,9 +843,12 @@ public class Payments extends javax.swing.JInternalFrame {
     private javax.swing.JLabel jLabel3;
     private javax.swing.JLabel jLabel4;
     private javax.swing.JLabel jLabel5;
-    private javax.swing.JLabel jLabel6;
     private javax.swing.JLabel jLabel7;
     private javax.swing.JLabel jLabel9;
+    private javax.swing.JLabel jLabelMonthlyIncome;
+    private javax.swing.JLabel jLabelOutstandingAmount;
+    private javax.swing.JLabel jLabelTodayIncome;
+    private javax.swing.JLabel jLabelTotalPayments;
     private javax.swing.JPanel jPanel1;
     private javax.swing.JPanel jPanel2;
     private javax.swing.JPanel jPanel3;
@@ -650,9 +866,23 @@ public class Payments extends javax.swing.JInternalFrame {
     private javax.swing.JTextField jTextField5;
     private javax.swing.JTextField jTextField6;
     private javax.swing.JTextField jTextField7;
+    private javax.swing.JTextField jTextField8;
     // End of variables declaration//GEN-END:variables
 
     private void reset() {
-        throw new UnsupportedOperationException("Not supported yet."); // Generated from nbfs://nbhost/SystemFileSystem/Templates/Classes/Code/GeneratedMethodBody
+
+        jTextField1.setText("");
+        jTextField4.setText("");
+        jTextField5.setText("");
+        jTextField2.setText("");
+        jTextField3.setText("");
+        jTextField6.setText("");
+        jTextField8.setText("");
+        jTextField10.setText("");
+
+        jTextField7.setText("");
+        jFormattedTextField2.setText("");
+        jComboBox4.setSelectedIndex(0);
+        LoadPayments();
     }
 }
